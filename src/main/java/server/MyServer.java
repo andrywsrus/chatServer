@@ -3,7 +3,6 @@ package server;
 import server.handlers.ClientHandler;
 import server.services.AuthenticationService;
 import server.services.impl.SimpleAuthenticationServiceImpl;
-
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -15,23 +14,25 @@ public class MyServer {
     private final AuthenticationService authenticationService;
     private final ArrayList<ClientHandler> clients;
 
+    private ArrayList<String> clientsNameOnline;
+
+
     public MyServer(int port) throws IOException {
         serverSocket = new ServerSocket(port);
         authenticationService = new SimpleAuthenticationServiceImpl();
         clients = new ArrayList<>();
+        clientsNameOnline = new ArrayList<>();
     }
-
 
     public void start() {
         System.out.println("CЕРВЕР ЗАПУЩЕН!");
         System.out.println("---------------");
-
-        try {
-            while (true) {
+        while (true) {
+            try {
                 waitAndProcessNewClientConnection();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
     }
 
@@ -48,18 +49,6 @@ public class MyServer {
         handler.handle();
     }
 
-    public synchronized void subscribe(ClientHandler handler) {
-        clients.add(handler);
-    }
-
-    public synchronized void unSubscribe(ClientHandler handler) {
-        clients.remove(handler);
-    }
-
-    public AuthenticationService getAuthenticationService() {
-        return authenticationService;
-    }
-
     public boolean isUsernameBusy(String username) {
         for (ClientHandler client : clients) {
             if (client.getUsername().equals(username)) {
@@ -67,6 +56,20 @@ public class MyServer {
             }
         }
         return false;
+    }
+
+    public synchronized void subscribe(ClientHandler handler) {
+        clients.add(handler);
+        clientsNameOnline.add(handler.getUsername());
+    }
+
+    public synchronized void unSubscribe(ClientHandler handler) {
+        clients.remove(handler);
+        clientsNameOnline.remove(handler.getUsername());
+    }
+
+    public AuthenticationService getAuthenticationService() {
+        return authenticationService;
     }
 
     public void stop() {
@@ -78,21 +81,23 @@ public class MyServer {
 
     public synchronized void broadcastMessage(ClientHandler sender, String message) throws IOException {
         for (ClientHandler client : clients) {
-/*            if (client == sender) {
+            /*if (client == sender) {
                 continue;
             }*/
             client.sendMessage(sender.getUsername(), message);
         }
     }
 
-
-
-    public synchronized void sendPrivateMessage(ClientHandler sender, String recipient, String privateMessage) throws IOException {
+    public synchronized void privateBroadcastMessage(ClientHandler sender, String recipient, String message) throws IOException {
         for (ClientHandler client : clients) {
+            if (client == sender) {
+                continue;
+            }
             if (client.getUsername().equals(recipient)) {
-                client.sendMessage(sender.getUsername(), privateMessage, true);
+                client.sendMessage(sender.getUsername(), message, true);
             }
         }
+        System.out.println(clientsNameOnline.toString());
     }
 
     public synchronized void broadcastServerMessage(ClientHandler sender, String message) throws IOException {
@@ -101,6 +106,12 @@ public class MyServer {
                 continue;
             }
             client.sendServerMessage(message);
+        }
+    }
+
+    public synchronized void broadcastOnlineClients() throws IOException {
+        for (ClientHandler client : clients) {
+            client.sendServerOnlineClients(String.join(";",clientsNameOnline));
         }
     }
 }
