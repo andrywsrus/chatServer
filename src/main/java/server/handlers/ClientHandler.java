@@ -2,11 +2,9 @@ package server.handlers;
 
 import server.MyServer;
 import server.services.AuthenticationService;
-
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.ObjectInputStream;
 import java.net.Socket;
 
 public class ClientHandler {
@@ -15,9 +13,10 @@ public class ClientHandler {
     private static final String AUTHERR_CMD_PREFIX = "/autherr"; // + error message
     private static final String CLIENT_MSG_CMD_PREFIX = "/cMsg"; // + msg
     private static final String SERVER_MSG_CMD_PREFIX = "/sMsg"; // + msg
-    private static final String PRIVATE_MSG_CMD_PREFIX = "/w"; // + username + msg
+    private static final String PRIVATE_MSG_CMD_PREFIX = "/pm"; // + username + msg
     private static final String STOP_SERVER_CMD_PREFIX = "/stop";
     private static final String END_CLIENT_CMD_PREFIX = "/end";
+    private static final String SERVER_MSG_USER_ONLINE = "/online";
     private MyServer myServer;
     private Socket clientSocket;
     private DataInputStream in;
@@ -29,7 +28,6 @@ public class ClientHandler {
         this.myServer = myServer;
         clientSocket = socket;
     }
-
 
     public void handle() throws IOException {
         in = new DataInputStream(clientSocket.getInputStream());
@@ -43,26 +41,34 @@ public class ClientHandler {
                 try {
                     myServer.broadcastServerMessage(this, "Пользователь " + username + " отключился от чата");
                 } catch (IOException ex) {
-                    ex.printStackTrace();
+                    throw new RuntimeException(ex);
                 }
+                System.out.println("Пользователь " + username + " отключился от чата");
                 myServer.unSubscribe(this);
+                try {
+                    myServer.broadcastOnlineClients();
+                } catch (IOException ex) {
+                    throw new RuntimeException(ex);
+                }
                 e.printStackTrace();
             }
         }).start();
     }
 
     private void authentication() throws IOException {
-        while (true) {
+        while (true){
             String message = in.readUTF();
 
-            if (message.startsWith(AUTH_CMD_PREFIX)) {
+            if (message.startsWith(AUTH_CMD_PREFIX)){
                 boolean isSuccessAuth = processAuthentication(message);
-                if (isSuccessAuth) {
+                if (isSuccessAuth){
                     break;
                 }
-            } else {
-                out.writeUTF(AUTHERR_CMD_PREFIX + " Неверная команда аутентификации");
-                System.out.println("Неверная команда аутентификации");
+                else {
+                    out.writeUTF(AUTHERR_CMD_PREFIX + " Неверная команда аутентификации");
+                    System.out.println("Неверная команда аутентификации");
+                }
+
             }
         }
     }
@@ -91,12 +97,16 @@ public class ClientHandler {
             out.writeUTF(AUTHOK_CMD_PREFIX + " " + username);
             myServer.subscribe(this);
             System.out.println("Пользователь " + username + " подключился к чату");
-
             myServer.broadcastServerMessage(this, "Пользователь " + username + " подключился к чату");
+            myServer.broadcastOnlineClients();
 
             return true;
         } else {
-            out.writeUTF(AUTHERR_CMD_PREFIX + " Неверная комбинация логина и пароля");
+            try {
+                out.writeUTF(AUTHERR_CMD_PREFIX + " Неверная комбинация логина и пароля");
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
             return false;
         }
     }
@@ -104,28 +114,28 @@ public class ClientHandler {
     private void readMessage() throws IOException {
         while (true) {
             String message = in.readUTF();
-
             System.out.println("message | " + username + ": " + message);
-
             String typeMessage = message.split("\\s+")[0];
-            if (!typeMessage.startsWith("/")) {
+
+            if (typeMessage.startsWith("/")){
                 System.out.println("Неверный запрос");
             }
-
 
             switch (typeMessage) {
                 case STOP_SERVER_CMD_PREFIX -> myServer.stop();
                 case END_CLIENT_CMD_PREFIX -> closeConnection();
                 case CLIENT_MSG_CMD_PREFIX -> {
-                    String[] messageParts = message.split("\\s+", 2);
-                    myServer.broadcastMessage(this, messageParts[1]);}
-                case PRIVATE_MSG_CMD_PREFIX -> {
-                    String[] privateMessageParts = message.split("\\s+", 3);
-                    String recipient  = privateMessageParts[1];
-                    String privateMessage  = privateMessageParts[2];
+                    String[] messageParts = message.split("\\S+",2);
+                    myServer.broadcastMessage(this, messageParts[1]);
 
-                    myServer.sendPrivateMessage(this, recipient, privateMessage);
-                } default -> System.out.println("Неверная команда");
+                }
+                case PRIVATE_MSG_CMD_PREFIX -> {
+                    String[] partMessage = message.split("\\s+",3);
+                    String recipient = partMessage[1];
+                    String privateMessage = partMessage[2];
+                    myServer.privateBroadcastMessage(this, recipient, privateMessage);
+                }
+                default -> System.out.println("Неверная команда");
             }
 
         }
@@ -133,25 +143,29 @@ public class ClientHandler {
 
     private void closeConnection() throws IOException {
         clientSocket.close();
+        myServer.unSubscribe(this);
         System.out.println(username + " отключился");
     }
 
     public void sendServerMessage(String message) throws IOException {
         out.writeUTF(String.format("%s %s", SERVER_MSG_CMD_PREFIX, message));
     }
-
-    public void sendMessage(String sender, String message, Boolean isPrivate) throws IOException {
-        out.writeUTF(String.format("%s %s %s", isPrivate ?
-                PRIVATE_MSG_CMD_PREFIX
-                : CLIENT_MSG_CMD_PREFIX,
-                sender, message));
+    public void sendServerOnlineClients(String message) throws IOException {
+        out.writeUTF(String.format("%s %s", SERVER_MSG_USER_ONLINE, message));
     }
-
     public void sendMessage(String sender, String message) throws IOException {
-        sendMessage(sender, message, false);
+        out.writeUTF(String.format("%s %s %s", CLIENT_MSG_CMD_PREFIX, sender, message));
+    }
+    public void sendMessage(String sender, String message,boolean isPrivate) throws IOException {
+        out.writeUTF(String.format("%s %s %s", isPrivate ?
+                        PRIVATE_MSG_CMD_PREFIX
+                        : CLIENT_MSG_CMD_PREFIX,
+                sender, message));
     }
 
     public String getUsername() {
         return username;
     }
+
 }
+
